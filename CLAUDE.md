@@ -77,4 +77,4 @@ Only after everything above works.
 - **Aiming mode (⚙ / title toggle, saved in localStorage):** *Easy* (default) shows the full trajectory up to the first thing it would hit, wind included and exact. *Hard* is the original spec: first 25% of the arc, no wind.
 - Arrow power raised (`MAXSPEED = 1400`). Flight and preview share `stepArrow()` (fixed 1/300 s step) and `arrowHit()`.
 - All villager statements, herald lines and Claude prompts use simple everyday English.
-- Hosted on GitHub Pages: https://babusovereign.github.io/robin-hoodwinked/
+- Hosted on GitHub Pages: https://babusovereign.com/robin-hoodwinked/

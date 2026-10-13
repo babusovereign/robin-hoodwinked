@@ -2,7 +2,7 @@
 
 A silly medieval archery logic game in a single `index.html`, with no build step and no dependencies.
 
-**Play:** https://babusovereign.github.io/robin-hoodwinked/ (or just double-click `index.html`).
+**Play:** https://babusovereign.com/robin-hoodwinked/ (or just double-click `index.html`).
 
 ## How to play
 - Each round, three villagers have apples on their heads. One of them stole the King's pie.
