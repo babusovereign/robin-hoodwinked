@@ -41,7 +41,7 @@
 <div id="info"></div>
 
 <div id="settings" hidden>
-  <div class="card">
+  <form class="card" onsubmit="return false">
     <h2>Royal Settings</h2>
     <fieldset class="mode"><legend>Aiming mode</legend>
       <label><input type="radio" name="mode" value="easy"> <b>Easy</b> — dots show the whole flight, wind included</label>
@@ -54,8 +54,8 @@
     <label><input type="checkbox" id="optHerald" checked> Claude writes the herald's lines</label>
     <label><input type="checkbox" id="optRounds" checked> Claude invents new rounds</label>
     <p id="status"></p>
-    <button id="btnSave">Save</button><button id="btnForget" class="alt">Forget key</button><button id="btnClose" class="alt">Close</button>
-  </div>
+    <button type="button" id="btnSave">Save</button><button type="button" id="btnForget" class="alt">Forget key</button><button type="button" id="btnClose" class="alt">Close</button>
+  </form>
 </div>
 
 <script>
