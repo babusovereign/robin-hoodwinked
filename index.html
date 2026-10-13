@@ -1,0 +1,1235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Robin Hoodwinked — Shoot the liar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pirata+One&family=Alegreya+Sans:wght@500;700;800&display=swap" rel="stylesheet">
+<style>
+  html,body{margin:0;height:100%;background:#2b1d12;color:#2b1d12;font-family:'Alegreya Sans',Georgia,sans-serif}
+  body{display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}
+  #wrap{position:relative;line-height:0}
+  canvas{display:block;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;box-shadow:0 6px 30px #0009}
+  #info{display:none;box-sizing:border-box;width:100%;padding:10px 12px 24px;color:#f6e7c8;font-size:16px;line-height:1.35}
+  #info .bar{font-weight:800;color:#f4c430;margin-bottom:6px}
+  #info .st{background:#f6e7c8;color:#2b1d12;border-radius:8px;padding:6px 9px;margin:6px 0}
+  #info .st b{color:#8b1a1a}
+  #info .herald{margin-top:10px;font-style:italic;color:#ffd98a}
+  @media (orientation:portrait){
+    body{justify-content:flex-start;overflow-y:auto}
+    #info{display:block}
+  }
+  #settings{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center;z-index:10}
+  #settings[hidden]{display:none}
+  #settings .card{background:#f6e7c8;border:4px solid #8b5a2b;border-radius:12px;padding:18px 22px;width:min(420px,90vw);box-shadow:0 10px 40px #000a}
+  #settings h2{font-family:'Pirata One',Georgia,serif;font-weight:400;font-size:32px;margin:0 0 10px;color:#8b1a1a}
+  #settings label{display:block;margin:8px 0;font-weight:700}
+  #settings input[type=password]{width:100%;box-sizing:border-box;padding:8px;font-size:15px;border:2px solid #8b5a2b;border-radius:6px;margin-top:4px}
+  #settings .warn{background:#ffe1d6;border-left:4px solid #c0392b;padding:6px 8px;font-size:14px}
+  #settings button{font:inherit;font-weight:800;background:#c0392b;color:#fff;border:0;border-radius:6px;padding:8px 14px;margin:6px 6px 0 0;cursor:pointer}
+  #settings button.alt{background:#8b5a2b}
+  #settings fieldset{border:2px solid #8b5a2b;border-radius:8px;margin:0 0 10px;padding:4px 10px}
+  #settings legend{font-weight:800;color:#8b1a1a}
+  #settings fieldset label{font-weight:500;margin:4px 0}
+  #status{font-size:14px;min-height:1.2em;margin:6px 0 0}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" aria-label="Robin Hoodwinked game"></canvas></div>
+<div id="info"></div>
+
+<div id="settings" hidden>
+  <div class="card">
+    <h2>Royal Settings</h2>
+    <fieldset class="mode"><legend>Aiming mode</legend>
+      <label><input type="radio" name="mode" value="easy"> <b>Easy</b> — dots show the whole flight, wind included</label>
+      <label><input type="radio" name="mode" value="hard"> <b>Hard</b> — dots show only the first quarter, wind not included</label>
+    </fieldset>
+    <label>Anthropic API key
+      <input id="key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-...">
+    </label>
+    <p class="warn">⚠ The key is kept in memory only and forgotten when you close the page. Don't share this file with your key in it.</p>
+    <label><input type="checkbox" id="optHerald" checked> Claude writes the herald's lines</label>
+    <label><input type="checkbox" id="optRounds" checked> Claude invents new rounds</label>
+    <p id="status"></p>
+    <button id="btnSave">Save</button><button id="btnForget" class="alt">Forget key</button><button id="btnClose" class="alt">Close</button>
+  </div>
+</div>
+
+<script>
+'use strict';
+// ====================================================================
+// PUZZLES
+// ====================================================================
+// The thief always lies; innocents always tell the truth.
+const ROUNDS = [
+  { villagers:[{name:'Sir Bartholomew'},{name:'Gwen the Baker'},{name:'Old Tom'}], statements:[
+    {speaker:0, claim:{type:'is_thief',target:1}, text:'Gwen took the pie! She has crumbs on her apron.'},
+    {speaker:1, claim:{type:'is_thief',target:0}, text:'Sir Bartholomew took it! Look at his big belly!'},
+    {speaker:2, claim:{type:'is_thief',target:1}, text:'Gwen did it. I saw her run away with it.'}]},
+  { villagers:[{name:'Friar Puddingworth'},{name:'Mad Maud'},{name:'Little Pip'}], statements:[
+    {speaker:0, claim:{type:'is_thief',target:2}, text:'Little Pip did it! Kids love pie!'},
+    {speaker:1, claim:{type:'is_thief',target:0}, text:'The Friar did it. I saw him eat it.'},
+    {speaker:2, claim:{type:'is_thief',target:0}, text:'Friar Puddingworth took it! I promise!'}]},
+  { villagers:[{name:'Agnes Goosewife'},{name:'Hubert Turnip'},{name:'Lord Snootington'}], statements:[
+    {speaker:0, claim:{type:'is_thief',target:2}, text:'Lord Snootington took it! My goose saw him.'},
+    {speaker:1, claim:{type:'is_thief',target:2}, text:'It was Lord Snootington.'},
+    {speaker:2, claim:{type:'is_thief',target:1}, text:'Rubbish! Hubert Turnip did it!'}]},
+  { villagers:[{name:'Brother Mumble'},{name:'Dame Prudence'},{name:'Wat the Smith'}], statements:[
+    {speaker:0, claim:{type:'not_thief',target:0}, text:'I did not take the pie. Mmf.'},
+    {speaker:1, claim:{type:'is_thief',target:2}, text:'Wat the Smith did it! Smell his hands!'},
+    {speaker:2, claim:{type:'not_thief',target:0}, text:'Brother Mumble did not do it. He only eats soup.'}]},
+  { villagers:[{name:'Jolly Jack'},{name:'Sister Agatha'},{name:'Ned the Nervous'}], statements:[
+    {speaker:0, claim:{type:'is_thief',target:1}, text:'Sister Agatha did it!'},
+    {speaker:1, claim:{type:'not_thief',target:1}, text:'I did not take the pie. I do not even like pie.'},
+    {speaker:2, claim:{type:'not_thief',target:1}, text:'S-Sister Agatha did not do it.'}]},
+  { villagers:[{name:'Mistress Crumble'},{name:'Gregor the Large'},{name:'Sly Wilfred'}], statements:[
+    {speaker:0, claim:{type:'not_thief',target:1}, text:'Gregor did not do it. He is too slow!'},
+    {speaker:1, claim:{type:'not_thief',target:0}, text:'Mistress Crumble did not do it. She has no teeth.'},
+    {speaker:2, claim:{type:'is_thief',target:0}, text:'Mistress Crumble did it! Grannies love pie!'}]},
+  { villagers:[{name:'Bess the Milkmaid'},{name:'Sir Reginald Pants'},{name:'Odo the Fool'}], statements:[
+    {speaker:0, claim:{type:'not_thief',target:2}, text:'Odo did not do it. He cannot even find his feet.'},
+    {speaker:1, claim:{type:'not_thief',target:1}, text:'I did NOT take the pie. Do not look in my pants.'},
+    {speaker:2, claim:{type:'not_thief',target:0}, text:'Bess did not do it. Honk honk!'}]},
+  { villagers:[{name:'Baron von Crust'},{name:'Edith Two-Spoons'},{name:'Cuthbert'}], statements:[
+    {speaker:0, claim:{type:'not_thief',target:0}, text:'I did not take the pie! I am a rich baron!'},
+    {speaker:1, claim:{type:'not_thief',target:2}, text:'Cuthbert did not do it. He never has fun.'},
+    {speaker:2, claim:{type:'not_thief',target:1}, text:'Edith did not do it. She only has spoons.'}]},
+  { villagers:[{name:'Wise Old Wenda'},{name:'Tiny Tim the Tall'},{name:'Lady Larcenia'}], statements:[
+    {speaker:0, claim:{type:'not_thief',target:1}, text:'Tiny Tim did not do it. He is very honest.'},
+    {speaker:1, claim:{type:'not_thief',target:1}, text:'I did not take it. I only eat turnips.'},
+    {speaker:2, claim:{type:'is_thief',target:1}, text:'Tiny Tim did it! He is tall enough to reach it!'}]},
+  { villagers:[{name:'Squire Nibbles'},{name:'Duchess Fibberley'},{name:'Mungo the Quiet'}], statements:[
+    {speaker:0, claim:{type:'not_thief',target:2}, text:'Mungo did not do it. He was asleep all day.'},
+    {speaker:1, claim:{type:'is_thief',target:0}, text:'Squire Nibbles did it! He nibbles everything!'},
+    {speaker:2, claim:{type:'not_thief',target:2}, text:'Mmmph. (I did not do it!)'}]},
+];
+
+// Returns every thief index consistent with the statements. Valid rounds have exactly one.
+function solve(round){
+  const out = [];
+  for (let t = 0; t < 3; t++){
+    const ok = round.statements.every(s => {
+      const truth = s.claim.type === 'is_thief' ? s.claim.target === t : s.claim.target !== t;
+      return s.speaker === t ? !truth : truth;
+    });
+    if (ok) out.push(t);
+  }
+  return out;
+}
+ROUNDS.forEach((r, i) => {
+  const s = solve(r);
+  if (s.length !== 1) console.error(`Round ${i+1} is not uniquely solvable (solutions: ${JSON.stringify(s)})`);
+});
+
+// ====================================================================
+// HERALD LINES (offline)
+// ====================================================================
+const LINES = {
+  roundStart: [
+    'Round {round}! One of these three stole the pie. The thief always lies!',
+    'Round {round}! Liars lie. Honest people tell the truth. You can do this. Maybe.',
+    'Round {round}! A new pie, a new thief, a new chance to look silly.',
+    'Round {round}! The King wants his pie back. Aim well!',
+    'Round {round}! Read carefully. The thief hopes you will not.',
+    'Round {round}! Remember: the thief is the one telling a lie.',
+    'Round {round}! The crowd thinks you will miss. Show them!',
+    'Round {round}! Find the liar. Hit the apple. Easy, right?'],
+  win: [
+    'Hooray! You caught {thief}! I am almost impressed.',
+    'A hit! The pie is saved! The King is a little bit happy.',
+    'Well done! {thief} was the liar. Even you got it right!',
+    'Good thinking AND good aim? Who are you?',
+    'Got them! {thief} must wash the royal pie dishes for a year!',
+    'Amazing! Write down the date. The archer did something right.',
+    'The thief is caught and the pie is safe!',
+    'Nice shot! The crowd cheers. Mostly for the pie.'],
+  wrongVillager: [
+    'You shot {victim}! {victim} did NOTHING wrong! Did you read?',
+    'Oh no! {victim} told the truth, and now {victim} is on the floor.',
+    '{victim} fainted! That was the wrong person, silly.',
+    'That was {victim}! {victim} was honest! Try again.',
+    'Wrong one! {victim} is innocent. The real thief is laughing.',
+    '{victim} told the truth and got an arrow. Not fair!',
+    'The crowd gasps! {victim} is innocent and now lying down!',
+    'Wrong person! {victim} needs a nap now. Oh look, already napping.'],
+  bodyHit: [
+    "Ouch! You hit {victim}'s hat! Shoot the APPLE, the round red thing!",
+    "{victim}'s hat has a new feather. A pointy one. Lose points!",
+    '{victim} jumps and yells! That is a person, not a target!',
+    'You hit {victim}! The apple is on TOP of the head!',
+    "{victim}'s hat did not need an arrow. Neither did your score.",
+    '{victim} is hopping mad. Really hopping!',
+    'You hit the hat! {victim} is fine, but very upset.',
+    '{victim} will talk about this hat for years!'],
+  miss: [
+    'You missed! The ground says thank you.',
+    'Missed! The apples are still safe.',
+    'Your arrow went into the dirt. Hello, worms!',
+    'Missed. Robin Hood would be sad.',
+    'Nice shot... at the ground.',
+    'Not even close! Was that a shot or a sneeze?',
+    'Another arrow in the dirt. The worms say hi.',
+    'Missed! Try aiming at the apples next time.'],
+  kingHat: [
+    "THE KING'S HAT! You shot the KING'S HAT!",
+    'Oh no! You shot the King\'s hat! He is very angry!',
+    'The King\'s hat has a hole in it now. Run!',
+    'You hit the King\'s hat! He will not forget this.',
+    'The King has an arrow in his hat. The King is NOT happy.',
+    'The King is shouting! At least it was only his hat.',
+    'King\'s hat: broken. You: in big trouble.',
+    'The King loved that hat. LOVED it.'],
+  outOfArrows: [
+    'No arrows left! {thief} runs away with the pie.',
+    '{thief} gets away with the pie, laughing at you!',
+    'No more arrows! {thief} waves goodbye and eats the pie.',
+    '{thief} was the liar! And now {thief} is gone.',
+    'The thief runs! The pie is gone! Oh dear.',
+    '{thief} runs into the forest with the pie.',
+    'No arrows, no pie. {thief} says thank you!',
+    '{thief} gets away. Everyone saw that coming.'],
+  end: {
+    'Village Idiot':        'The King has seen better shooting from a goat with its eyes shut.',
+    'Squire':               'Not bad, not great. The King yawns.',
+    'Royal Archer':         'Good job! The King gives you one slice of pie.',
+    'Legend of the Forest': 'A legend! People will sing songs about you!'}
+};
+
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const fill = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => v[k] ?? '');
+
+// ====================================================================
+// SETUP, SCALING
+// ====================================================================
+const W = 1280, H = 720, GROUND = 620, GRAV = 620, MAXPULL = 220, MAXSPEED = 1400;
+const VX = [830, 1000, 1165];
+const SHOULDER = { x: 150, y: 478 };
+const PLAYBTN = { x: 540, y: 478, w: 200, h: 66 };
+const BTN_MUTE = { x: 1192, y: 23, r: 17 }, BTN_GEAR = { x: 1240, y: 23, r: 17 };
+const FONT_T = "'Pirata One', 'MedievalSharp', Georgia, serif";
+const FONT_B = "'Alegreya Sans', 'Trebuchet MS', Arial, sans-serif";
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let SCALE = 1;
+function fit(){
+  const portrait = innerHeight > innerWidth;
+  const maxW = innerWidth - (portrait ? 0 : 8), maxH = portrait ? innerHeight * 0.6 : innerHeight - 8;
+  let w = maxW, h = w * 9 / 16;
+  if (h > maxH){ h = maxH; w = h * 16 / 9; }
+  cv.style.width = w + 'px'; cv.style.height = h + 'px';
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  SCALE = cv.width / W;
+}
+addEventListener('resize', fit); fit();
+
+// ====================================================================
+// AUDIO (Web Audio blips)
+// ====================================================================
+let AC = null, noiseBuf = null, muted = false;
+function audio(){
+  if (!AC){
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      const n = AC.sampleRate * 1.5;
+      noiseBuf = AC.createBuffer(1, n, AC.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    } catch (e) { AC = null; }
+  }
+  if (AC && AC.state === 'suspended') AC.resume();
+}
+function tone(type, f0, f1, dur, vol, delay = 0){
+  if (muted || !AC) return;
+  const t = AC.currentTime + delay, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(AC.destination); o.start(t); o.stop(t + dur + 0.05);
+}
+function noise(dur, vol, ftype, freq, q, attack){
+  if (muted || !AC) return;
+  const t = AC.currentTime, s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  s.buffer = noiseBuf; f.type = ftype; f.frequency.value = freq; f.Q.value = q;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + attack);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  s.connect(f).connect(g).connect(AC.destination); s.start(t); s.stop(t + dur + 0.05);
+}
+const SFX = {
+  twang(){ tone('triangle', 330, 90, 0.28, 0.35); tone('sawtooth', 700, 200, 0.07, 0.06); },
+  splat(){ noise(0.28, 0.6, 'lowpass', 900, 1, 0.004); tone('sine', 190, 55, 0.18, 0.3); },
+  thud(){ noise(0.12, 0.45, 'lowpass', 320, 1, 0.002); },
+  boing(){
+    if (muted || !AC) return;
+    const t = AC.currentTime, o = AC.createOscillator(), g = AC.createGain(), l = AC.createOscillator(), lg = AC.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(520, t + 0.12);
+    o.frequency.exponentialRampToValueAtTime(170, t + 0.45);
+    l.frequency.value = 18; lg.gain.value = 40; l.connect(lg).connect(o.frequency);
+    g.gain.setValueAtTime(0.35, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+    o.connect(g).connect(AC.destination); o.start(t); l.start(t); o.stop(t + 0.55); l.stop(t + 0.55);
+  },
+  cheer(){ noise(1.5, 0.3, 'bandpass', 1300, 0.7, 0.18); noise(1.1, 0.15, 'bandpass', 2600, 1.5, 0.1);
+           [523, 659, 784, 1047].forEach((f, i) => tone('square', f, f, 0.16, 0.06, i * 0.1)); },
+  gasp(){ noise(0.6, 0.35, 'highpass', 2200, 0.7, 0.25); },
+  boo(){ tone('sawtooth', 160, 90, 0.9, 0.12); noise(0.9, 0.15, 'lowpass', 500, 1, 0.2); },
+  trumpet(){ [392, 523, 659].forEach((f, i) => tone('square', f, f * 1.01, 0.14, 0.05, i * 0.12)); },
+};
+function toggleMute(){ muted = !muted; }
+
+// ====================================================================
+// GAME STATE
+// ====================================================================
+const G = {
+  screen: 'title', round: 0, score: 0, arrowsLeft: 3, wind: 0, thief: 0, data: null,
+  vill: [], stmts: [], phase: 'aim', aim: null, arrow: null, lastAng: -0.3,
+  stuck: [], particles: [], timers: [], pie: null,
+  king: { t: 0, dur: 3.6 }, crowd: { mood: 'idle', t: 0 },
+  herald: { text: '', shown: 0 }, banner: { text: '', t: 0 },
+  gen: null, physAcc: 0, best: 0, rank: '', endLine: '', time: 0,
+};
+try { G.best = +localStorage.getItem('robinHoodwinkedBest') || 0; } catch (e) {}
+// Aiming difficulty: easy = exact full-path preview with wind; hard = first 25% of the arc, no wind (original spec).
+let MODE = 'easy';
+try { if (localStorage.getItem('robinHoodwinkedMode') === 'hard') MODE = 'hard'; } catch (e) {}
+function setMode(m){ MODE = m === 'hard' ? 'hard' : 'easy'; try { localStorage.setItem('robinHoodwinkedMode', MODE); } catch (e) {} }
+
+const later = (sec, fn) => G.timers.push({ t: sec, fn });
+
+const TUNICS = ['#c0392b','#2e86c1','#8e44ad','#d68910','#1e8449','#a04000','#5d6d7e','#d35400','#117a65'];
+const SKINS = ['#f5cba7','#e0ac69','#c68642','#8d5524','#f1c27d'];
+const HATS = ['pointy','beret','bucket','feather','hood','crown'];
+const HATH = { pointy: 36, beret: 14, bucket: 24, feather: 18, hood: 16, crown: 20 };
+function hash(s){ let h = 2166136261; for (const c of s){ h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+function makeVillager(v, i){
+  const h = hash(v.name);
+  return { name: v.name, letter: 'ABC'[i], x: VX[i],
+    tunic: TUNICS[h % 9], skin: SKINS[(h >>> 4) % 5], hat: HATS[(h >>> 8) % 6], hatCol: TUNICS[(h >>> 12) % 9],
+    bodyH: 52 + ((h >>> 16) % 14), beard: ((h >>> 20) % 3) === 0, seed: (h % 1000) / 250,
+    apple: true, fainted: false, faint: 0, hop: 0, hopV: 0, stuck: [], running: false, run: 0, hasPie: false,
+    mood: '', moodT: 0 };
+}
+function geo(v){
+  const shoulder = -(34 + v.bodyH), headC = shoulder - 15, headTop = headC - 17,
+        hatTop = headTop - HATH[v.hat] + 5, appleY = hatTop - 13;
+  return { shoulder, headC, headTop, hatTop, appleY };
+}
+const applePos = v => ({ x: v.x, y: GROUND - v.hop + geo(v).appleY });
+const groundAt = x => x < 350 ? Math.min(GROUND, 560 + ((x - 150) / 200) ** 2 * 60) : GROUND;
+G.vill = ROUNDS[0].villagers.map(makeVillager);
+
+// ====================================================================
+// FLOW
+// ====================================================================
+function startGame(){
+  G.score = 0; G.timers = []; G.particles = []; G.round = 0; G.screen = 'play';
+  if (G.gen && G.gen.forRound !== 1) G.gen = null;
+  SFX.trumpet();
+  startRound(1);
+}
+function startRound(n){
+  G.round = n;
+  let data = ROUNDS[n - 1];
+  if (G.gen && G.gen.forRound === n){ data = G.gen.data; }
+  G.gen = null;
+  G.data = data;
+  G.vill = data.villagers.map(makeVillager);
+  G.stmts = [0, 1, 2].map(i => data.statements.find(s => s.speaker === i));
+  G.thief = solve(data)[0];
+  G.arrowsLeft = 3; G.stuck = []; G.pie = null; G.arrow = null; G.aim = null; G.phase = 'aim';
+  G.wind = n <= 3 ? 0 : (Math.random() < 0.5 ? -1 : 1) * (30 + (n - 3) * 18) * (0.45 + Math.random() * 0.55);
+  G.banner = { text: `Round ${n}`, t: 1.8 };
+  heraldSay('roundStart', { round: n },
+    `Round ${n} of 10 begins. Suspects: ${G.vill.map(v => v.name).join(', ')}. ${G.wind ? 'The wind is blowing.' : 'No wind.'}`);
+  if (n < 10) fetchGenRound(n + 1);
+}
+function nextRound(){
+  if (G.round >= 10) endGame(); else startRound(G.round + 1);
+}
+function rankFor(s){ return s < 400 ? 'Village Idiot' : s < 800 ? 'Squire' : s < 1200 ? 'Royal Archer' : 'Legend of the Forest'; }
+function endGame(){
+  G.screen = 'end'; G.phase = 'wait'; G.arrow = null;
+  G.rank = rankFor(G.score);
+  G.newBest = G.score > G.best;
+  if (G.newBest){ G.best = G.score; try { localStorage.setItem('robinHoodwinkedBest', String(G.score)); } catch (e) {} }
+  G.endLine = LINES.end[G.rank];
+  setHerald(G.endLine);
+  if (API_KEY && OPT.herald){
+    const id = ++heraldId;
+    claude(HERALD_SYS, `The tournament is over. The archer scored ${G.score} points and earned the rank "${G.rank}". Give your verdict.`, 80, 3000)
+      .then(l => { if (id === heraldId && l){ G.endLine = cleanLine(l); setHerald(G.endLine); } });
+  }
+  if (G.rank === 'Legend of the Forest') confetti(640);
+  SFX.trumpet();
+  fetchGenRound(1);
+}
+
+function release(){
+  const a = G.aim; G.aim = null;
+  const v = aimVelocity(a);
+  if (!v) return;
+  G.arrow = launchState(v); G.physAcc = 0;
+  G.lastAng = G.arrow.ang;
+  G.arrowsLeft--; G.phase = 'flight';
+  SFX.twang();
+}
+function aimVelocity(a){
+  if (!a) return null;
+  const dx = a.sx - a.x, dy = a.sy - a.y, len = Math.hypot(dx, dy);
+  if (len < 15) return null;
+  const pull = Math.min(len, MAXPULL), speed = pull / MAXPULL * MAXSPEED;
+  return { vx: dx / len * speed, vy: dy / len * speed, speed, pull: pull / MAXPULL };
+}
+
+function afterShot(){
+  if (G.screen !== 'play') return;
+  if (G.arrowsLeft <= 0){ G.phase = 'wait'; later(0.9, thiefEscapes); }
+  else G.phase = 'aim';
+}
+function hitApple(i){
+  const v = G.vill[i], p = applePos(v);
+  G.arrow = null; v.apple = false; G.phase = 'wait';
+  SFX.splat(); appleBurst(p.x, p.y);
+  if (i === G.thief){
+    const pts = 100 + 50 * G.arrowsLeft;
+    G.score += pts; popup(p.x, p.y - 30, `+${pts}`, '#1e8449');
+    v.mood = 'caught'; v.moodT = 99;
+    G.pie = { x: v.x - 6, y: GROUND - 60, vy: -260, rot: 0 };
+    crowdMood('cheer', 3); later(0.15, SFX.cheer); confetti(v.x);
+    heraldSay('win', { thief: v.name }, `The archer correctly shot the apple off the lying thief ${v.name}'s head in round ${G.round}. The pie is recovered.`);
+    later(3.6, nextRound);
+  } else {
+    G.score -= 50; popup(p.x, p.y - 30, '-50', '#c0392b');
+    v.fainted = true; v.faint = 0.001;
+    crowdMood('gasp', 2); later(0.1, SFX.gasp);
+    heraldSay('wrongVillager', { victim: v.name }, `The archer shot the apple off INNOCENT ${v.name}'s head (round ${G.round}). ${v.name} fainted dramatically.`);
+    later(1.0, afterShot);
+  }
+}
+function hitBody(i){
+  const v = G.vill[i], a = G.arrow, g = geo(v);
+  G.arrow = null; G.phase = 'wait';
+  v.stuck.push({ lx: Math.max(-16, Math.min(8, a.x - v.x)) - 4, ly: (g.hatTop + g.headTop) / 2 + 3, ang: a.ang });
+  v.hopV = -430; v.mood = 'ouch'; v.moodT = 1.1;
+  G.score -= 25; popup(v.x, GROUND + g.appleY - 30, '-25', '#c0392b'); popup(v.x + 30, GROUND + g.headC, 'YELP!', '#8b1a1a');
+  SFX.boing();
+  heraldSay('bodyHit', { victim: v.name }, `The archer's arrow hit ${v.name}'s hat instead of the apple (round ${G.round}). They yelped and hopped.`);
+  later(0.9, afterShot);
+}
+function missShot(hitGround){
+  const a = G.arrow;
+  G.arrow = null; G.phase = 'wait';
+  if (Math.random() < 0.2){
+    G.king.t = G.king.dur;
+    SFX.boing(); later(0.25, SFX.boo); crowdMood('gasp', 2.5);
+    heraldSay('kingHat', {}, `The archer's stray arrow went straight through the King's own hat (round ${G.round}). The King is outraged.`);
+    later(1.4, afterShot);
+  } else {
+    if (hitGround){ G.stuck.push({ x: a.x, y: groundAt(a.x), ang: a.ang }); SFX.thud(); }
+    heraldSay('miss', {}, `The archer missed everything; the arrow ${hitGround ? 'stuck in the dirt' : 'sailed off into the distance'} (round ${G.round}, ${G.arrowsLeft} arrows left).`);
+    later(0.8, afterShot);
+  }
+}
+function thiefEscapes(){
+  const v = G.vill[G.thief];
+  v.running = true; v.hasPie = true; v.mood = 'smug'; v.moodT = 99;
+  crowdMood('gasp', 2.5); SFX.boo();
+  heraldSay('outOfArrows', { thief: v.name }, `The archer ran out of arrows. The lying thief ${v.name} runs off with the King's pie, cackling (round ${G.round}).`);
+  later(3.2, nextRound);
+}
+function crowdMood(m, t){ G.crowd.mood = m; G.crowd.t = t; }
+
+// ====================================================================
+// PARTICLES
+// ====================================================================
+function popup(x, y, text, color){ G.particles.push({ type: 'text', x, y, vx: 0, vy: -50, grav: 0, life: 1.4, max: 1.4, text, color }); }
+function appleBurst(x, y){
+  for (let i = 0; i < 26; i++){
+    const a = Math.random() * Math.PI * 2, s = 80 + Math.random() * 320;
+    G.particles.push({ type: i % 3 ? 'circ' : 'rect', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 120, grav: 900,
+      life: 0.9 + Math.random() * 0.5, max: 1.4, color: i % 4 === 0 ? '#fff3c4' : i % 5 === 0 ? '#3c8d2f' : '#d62828',
+      size: 3 + Math.random() * 5, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 12 });
+  }
+}
+function confetti(cx){
+  const cols = ['#f4c430','#c0392b','#2e86c1','#27ae60','#8e44ad','#ffffff'];
+  for (let i = 0; i < 140; i++){
+    G.particles.push({ type: 'conf', x: cx + (Math.random() - 0.5) * 700, y: -20 - Math.random() * 200,
+      vx: (Math.random() - 0.5) * 80, vy: 60 + Math.random() * 120, grav: 40, life: 4, max: 4,
+      color: pick(cols), size: 5 + Math.random() * 5, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 10, ph: Math.random() * 6 });
+  }
+}
+
+// ====================================================================
+// UPDATE
+// ====================================================================
+function update(dt){
+  G.time += dt;
+  for (const tm of G.timers.slice()){
+    tm.t -= dt;
+    if (tm.t <= 0){ G.timers.splice(G.timers.indexOf(tm), 1); tm.fn(); }
+  }
+  if (G.arrow) updateArrow(dt);
+  for (const v of G.vill){
+    if (v.hop > 0 || v.hopV){ v.hopV += 1800 * dt; v.hop -= v.hopV * dt; if (v.hop <= 0){ v.hop = 0; v.hopV = v.hopV > 300 ? -v.hopV * 0.35 : 0; } }
+    if (v.faint > 0 && v.faint < 1) v.faint = Math.min(1, v.faint + dt * 1.6);
+    if (v.moodT > 0){ v.moodT -= dt; if (v.moodT <= 0) v.mood = ''; }
+    if (v.running) v.run += 300 * dt;
+  }
+  if (G.pie){
+    const p = G.pie;
+    p.vy += 1500 * dt; p.y += p.vy * dt; p.x -= 30 * dt * (p.vy !== 0);
+    if (p.y >= GROUND - 8){ p.y = GROUND - 8; p.vy = Math.abs(p.vy) > 150 ? -p.vy * 0.35 : 0; }
+  }
+  if (G.king.t > 0) G.king.t -= dt;
+  if (G.crowd.t > 0){ G.crowd.t -= dt; if (G.crowd.t <= 0) G.crowd.mood = 'idle'; }
+  if (G.banner.t > 0) G.banner.t -= dt;
+  G.herald.shown += dt * 55;
+  for (const c of CLOUDS){ c.x += (10 + G.wind * 0.3) * dt; if (c.x > W + 150) c.x = -150; if (c.x < -150) c.x = W + 150; }
+  for (let i = G.particles.length - 1; i >= 0; i--){
+    const p = G.particles[i];
+    p.vy += p.grav * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt;
+    if (p.vr) p.rot += p.vr * dt;
+    if (p.type === 'conf'){ p.x += Math.sin(G.time * 4 + p.ph) * 40 * dt + G.wind * 0.2 * dt; p.vy = Math.min(p.vy, 140); }
+    if (p.life <= 0 || p.y > H + 30) G.particles.splice(i, 1);
+  }
+}
+// Fixed-step physics shared by the real arrow and the aim preview, so the dots are exact.
+const PHYS_DT = 1 / 300;
+function stepArrow(a, wind = G.wind){
+  a.vx += wind * PHYS_DT; a.vy += GRAV * PHYS_DT; a.x += a.vx * PHYS_DT; a.y += a.vy * PHYS_DT;
+}
+function launchState(v){
+  const dir = { x: v.vx / v.speed, y: v.vy / v.speed };
+  return { x: SHOULDER.x + dir.x * 62, y: SHOULDER.y + dir.y * 62, vx: v.vx, vy: v.vy, ang: Math.atan2(v.vy, v.vx) };
+}
+// What the arrow tip touches at its current position (shared by flight and aim preview).
+function arrowHit(a){
+  for (let i = 0; i < 3; i++){
+    const v = G.vill[i];
+    if (!v.apple || v.running) continue;
+    const p = applePos(v);
+    if (Math.hypot(a.x - p.x, a.y - p.y) < 19) return { type: 'apple', i };
+  }
+  for (let i = 0; i < 3; i++){
+    const v = G.vill[i];
+    if (v.fainted || v.running) continue;
+    const g = geo(v), top = GROUND - v.hop + g.hatTop, bot = GROUND - v.hop;
+    if (a.x > v.x - 22 && a.x < v.x + 22 && a.y > top && a.y < bot) return { type: 'body', i };
+  }
+  if (a.y >= groundAt(a.x)) return { type: 'ground' };
+  if (a.x > W + 60 || a.x < -60 || a.y > H + 60) return { type: 'off' };
+  return null;
+}
+function updateArrow(dt){
+  const a = G.arrow;
+  G.physAcc += dt;
+  while (G.physAcc >= PHYS_DT){
+    G.physAcc -= PHYS_DT;
+    stepArrow(a);
+    a.ang = Math.atan2(a.vy, a.vx);
+    const hit = arrowHit(a);
+    if (!hit) continue;
+    if (hit.type === 'apple') hitApple(hit.i);
+    else if (hit.type === 'body') hitBody(hit.i);
+    else missShot(hit.type === 'ground');
+    return;
+  }
+}
+
+// ====================================================================
+// DRAW HELPERS
+// ====================================================================
+function rr(x, y, w, h, r){
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function circle(x, y, r){ ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+const wrapCache = new Map();
+function wrap(text, maxW, font){
+  const key = font + '|' + maxW + '|' + text;
+  if (wrapCache.has(key)) return wrapCache.get(key);
+  ctx.font = font;
+  const words = text.split(' '), lines = []; let cur = '';
+  for (const w of words){
+    const t = cur ? cur + ' ' + w : w;
+    if (ctx.measureText(t).width > maxW && cur){ lines.push(cur); cur = w; } else cur = t;
+  }
+  if (cur) lines.push(cur);
+  wrapCache.set(key, lines);
+  return lines;
+}
+if (document.fonts) document.fonts.addEventListener('loadingdone', () => wrapCache.clear());
+function bounce(x){
+  const n1 = 7.5625, d1 = 2.75;
+  if (x < 1 / d1) return n1 * x * x;
+  if (x < 2 / d1) return n1 * (x -= 1.5 / d1) * x + 0.75;
+  if (x < 2.5 / d1) return n1 * (x -= 2.25 / d1) * x + 0.9375;
+  return n1 * (x -= 2.625 / d1) * x + 0.984375;
+}
+function drawArrowShape(x, y, ang, len = 52){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(ang);
+  ctx.strokeStyle = '#7a5230'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-len, 0); ctx.lineTo(-6, 0); ctx.stroke();
+  ctx.fillStyle = '#9aa4ad'; ctx.beginPath(); ctx.moveTo(2, 0); ctx.lineTo(-9, -5); ctx.lineTo(-9, 5); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#c0392b';
+  ctx.beginPath(); ctx.moveTo(-len + 12, 0); ctx.lineTo(-len - 2, -7); ctx.lineTo(-len + 2, 0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.moveTo(-len + 12, 0); ctx.lineTo(-len - 2, 7); ctx.lineTo(-len + 2, 0); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function drawApple(x, y){
+  ctx.fillStyle = '#d62828'; circle(x, y, 14);
+  ctx.fillStyle = '#ff6b6b'; circle(x - 5, y - 4, 4);
+  ctx.strokeStyle = '#5b3a1e'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(x, y - 12); ctx.lineTo(x + 2, y - 19); ctx.stroke();
+  ctx.fillStyle = '#3c8d2f'; ctx.beginPath(); ctx.ellipse(x + 7, y - 17, 6, 3, -0.5, 0, Math.PI * 2); ctx.fill();
+}
+function drawPie(x, y, s = 1){
+  ctx.save(); ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = '#b5651d'; ctx.beginPath(); ctx.ellipse(0, 4, 24, 8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#e8a33d'; ctx.beginPath(); ctx.ellipse(0, 0, 22, 8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#a0522d'; ctx.lineWidth = 2;
+  for (let i = -2; i <= 2; i++){ ctx.beginPath(); ctx.moveTo(i * 7 - 3, -6); ctx.lineTo(i * 7 + 3, 6); ctx.stroke(); }
+  ctx.restore();
+}
+
+// ====================================================================
+// SCENE
+// ====================================================================
+const CLOUDS = [{ x: 200, y: 110, s: 1 }, { x: 640, y: 80, s: 1.3 }, { x: 1000, y: 140, s: 0.9 }, { x: 1250, y: 95, s: 1.1 }];
+const CROWD = Array.from({ length: 13 }, (_, i) => ({ x: 372 + i * 25 + (i * 37) % 9, c: TUNICS[(i * 5) % 9], s: SKINS[(i * 3) % 5], ph: i * 1.3, h: (i * 7) % 3 }));
+
+function drawBackground(t){
+  const sky = ctx.createLinearGradient(0, 0, 0, 560);
+  sky.addColorStop(0, '#5fb0ff'); sky.addColorStop(1, '#bfe6ff');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#fff4b0'; circle(1000, 120, 40); ctx.fillStyle = '#ffe36e'; circle(1000, 120, 32);
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  for (const c of CLOUDS){ circle(c.x, c.y, 26 * c.s); circle(c.x + 28 * c.s, c.y - 12 * c.s, 30 * c.s); circle(c.x + 58 * c.s, c.y, 24 * c.s); ctx.fillRect(c.x, c.y, 58 * c.s, 24 * c.s); }
+  // far hills
+  ctx.fillStyle = '#8fd27a';
+  ctx.beginPath(); ctx.moveTo(0, 560); ctx.quadraticCurveTo(250, 470, 520, 545); ctx.quadraticCurveTo(820, 470, 1280, 540); ctx.lineTo(1280, 600); ctx.lineTo(0, 600); ctx.fill();
+  drawCastle(t);
+  // field
+  const gr = ctx.createLinearGradient(0, 545, 0, H);
+  gr.addColorStop(0, '#6cc24a'); gr.addColorStop(1, '#3f8f2f');
+  ctx.fillStyle = gr; ctx.fillRect(0, 548, W, H - 548);
+  // archery lane
+  ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(0, GROUND - 4, W, 8);
+  drawBunting(t);
+}
+function drawCastle(t){
+  ctx.save(); ctx.translate(560, 552);
+  ctx.fillStyle = '#a7a9b8';
+  ctx.fillRect(-70, -70, 140, 70);
+  const tower = (x, w, h) => {
+    ctx.fillStyle = '#9496a8'; ctx.fillRect(x, -h, w, h);
+    for (let i = 0; i < w; i += 10) ctx.fillRect(x + i, -h - 8, 6, 8);
+  };
+  tower(-100, 36, 110); tower(64, 36, 110); tower(-22, 44, 140);
+  for (let i = -70; i < 70; i += 12){ ctx.fillStyle = '#a7a9b8'; ctx.fillRect(i, -78, 7, 8); }
+  ctx.fillStyle = '#5b3a1e'; ctx.beginPath(); ctx.moveTo(-14, 0); ctx.lineTo(-14, -26); ctx.arc(0, -26, 14, Math.PI, 0); ctx.lineTo(14, 0); ctx.fill();
+  ctx.fillStyle = '#3d3f52'; ctx.fillRect(-88, -80, 8, 14); ctx.fillRect(78, -80, 8, 14); ctx.fillRect(-4, -110, 8, 14);
+  // pennants flutter with the wind
+  const flag = (x, y, col) => {
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 26); ctx.stroke();
+    const dir = G.wind < 0 ? -1 : 1, len = 18 + Math.min(14, Math.abs(G.wind) / 8), wav = Math.sin(t * (4 + Math.abs(G.wind) / 30)) * 3;
+    ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x, y - 26); ctx.lineTo(x + dir * len, y - 21 + wav); ctx.lineTo(x, y - 16); ctx.fill();
+  };
+  flag(-82, -118, '#c0392b'); flag(82, -118, '#f4c430'); flag(0, -148, '#c0392b');
+  ctx.restore();
+}
+function drawBunting(t){
+  const x0 = 250, x1 = 790, sag = 34, y0 = 62, n = 18;
+  const yAt = u => y0 + Math.sin(u * Math.PI) * sag;
+  ctx.strokeStyle = '#6b4423'; ctx.lineWidth = 2; ctx.beginPath();
+  for (let i = 0; i <= 20; i++){ const u = i / 20; ctx[i ? 'lineTo' : 'moveTo'](x0 + (x1 - x0) * u, yAt(u)); } ctx.stroke();
+  ctx.fillStyle = '#6b4423'; ctx.fillRect(x0 - 4, y0 - 6, 8, 8); ctx.fillRect(x1 - 4, y0 - 6, 8, 8);
+  const cols = ['#c0392b', '#f4c430', '#2e86c1'];
+  const lean = Math.max(-14, Math.min(14, G.wind * 0.09));
+  for (let i = 0; i < n; i++){
+    const u = (i + 0.5) / n, x = x0 + (x1 - x0) * u, y = yAt(u);
+    const flutter = Math.sin(t * (3 + Math.abs(G.wind) / 25) + i) * (1.5 + Math.abs(G.wind) / 40);
+    ctx.fillStyle = cols[i % 3];
+    ctx.beginPath(); ctx.moveTo(x - 10, y); ctx.lineTo(x + 10, y); ctx.lineTo(x + lean + flutter, y + 22 - Math.abs(lean) * 0.3); ctx.closePath(); ctx.fill();
+  }
+}
+function drawHill(){
+  ctx.fillStyle = '#4fa63a';
+  ctx.beginPath(); ctx.moveTo(-60, H); ctx.lineTo(-60, GROUND);
+  for (let x = -50; x <= 360; x += 10) ctx.lineTo(x, groundAt(x));
+  ctx.lineTo(360, H); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#62bb48';
+  for (let i = 0; i < 9; i++){ const x = 40 + i * 30; ctx.beginPath(); ctx.ellipse(x, groundAt(x) + 6, 6, 2, 0, 0, Math.PI * 2); ctx.fill(); }
+}
+function drawStuckGround(){
+  for (const s of G.stuck){
+    drawArrowShape(s.x + Math.cos(s.ang) * 10, s.y + Math.sin(s.ang) * 10, s.ang);
+    ctx.fillStyle = '#6b4423'; ctx.beginPath(); ctx.ellipse(s.x, s.y + 2, 9, 3, 0, 0, Math.PI * 2); ctx.fill();
+  }
+}
+function drawCrowd(t){
+  const m = G.crowd.mood;
+  for (const c of CROWD){
+    let dy = -c.h * 3;
+    if (m === 'cheer') dy -= Math.abs(Math.sin(t * 11 + c.ph)) * 14;
+    else if (m === 'gasp') dy += 3;
+    else dy -= Math.abs(Math.sin(t * 1.5 + c.ph)) * 2;
+    const by = 594 + dy;
+    if (m === 'cheer'){
+      ctx.strokeStyle = c.c; ctx.lineWidth = 5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(c.x - 7, by + 2); ctx.lineTo(c.x - 13, by - 18); ctx.moveTo(c.x + 7, by + 2); ctx.lineTo(c.x + 13, by - 18); ctx.stroke();
+    }
+    ctx.fillStyle = c.c; rr(c.x - 10, by, 20, 34, 7); ctx.fill();
+    ctx.fillStyle = c.s; circle(c.x, by - 8, 9);
+    ctx.fillStyle = '#222'; circle(c.x - 4, by - 10, 1.4); circle(c.x + 2, by - 10, 1.4);
+    if (m === 'gasp'){ ctx.fillStyle = '#5a1a1a'; circle(c.x - 1, by - 3, 2.6); }
+    else if (m === 'cheer'){ ctx.fillStyle = '#5a1a1a'; ctx.beginPath(); ctx.arc(c.x - 1, by - 5, 4, 0, Math.PI); ctx.fill(); }
+  }
+  if (m === 'gasp'){ ctx.fillStyle = '#c0392b'; ctx.font = `bold 26px ${FONT_T}`; ctx.textAlign = 'center'; ctx.fillText('!!', 450, 560); ctx.fillText('!', 600, 555); }
+  // fence
+  ctx.fillStyle = '#8b5a2b';
+  ctx.fillRect(355, 598, 345, 6); ctx.fillRect(355, 610, 345, 6);
+  for (let x = 358; x <= 700; x += 38) ctx.fillRect(x - 3, 592, 7, 28);
+}
+function drawArcher(t){
+  const fx = 150, fy = groundAt(150);
+  const a = aimVelocity(G.aim);
+  const ang = a ? Math.atan2(a.vy, a.vx) : G.lastAng, pull = a ? a.pull : 0;
+  const dir = { x: Math.cos(ang), y: Math.sin(ang) };
+  const grip = { x: SHOULDER.x + dir.x * 40, y: SHOULDER.y + dir.y * 40 };
+  // legs
+  ctx.fillStyle = '#4b3621'; ctx.fillRect(fx - 12, fy - 36, 9, 36); ctx.fillRect(fx + 3, fy - 36, 9, 36);
+  ctx.fillStyle = '#3a2412'; rr(fx - 16, fy - 6, 15, 7, 3); ctx.fill(); rr(fx + 1, fy - 6, 15, 7, 3); ctx.fill();
+  // quiver
+  ctx.fillStyle = '#7a4a22'; ctx.save(); ctx.translate(fx - 18, fy - 76); ctx.rotate(-0.35); ctx.fillRect(-6, -22, 12, 40);
+  for (let i = 0; i < G.arrowsLeft; i++){ ctx.fillStyle = i % 2 ? '#fff' : '#c0392b'; ctx.fillRect(-5 + i * 4, -32, 3, 11); }
+  ctx.restore();
+  // body
+  ctx.fillStyle = '#2f7d32'; ctx.beginPath(); ctx.moveTo(fx - 18, fy - 30); ctx.lineTo(fx + 18, fy - 30); ctx.lineTo(fx + 13, fy - 86); ctx.lineTo(fx - 13, fy - 86); ctx.fill();
+  ctx.fillStyle = '#6b4423'; ctx.fillRect(fx - 16, fy - 46, 32, 6);
+  // head + hood
+  ctx.fillStyle = '#f1c27d'; circle(fx + 2, fy - 102, 16);
+  ctx.fillStyle = '#1f5e22';
+  ctx.beginPath(); ctx.moveTo(fx - 18, fy - 96); ctx.quadraticCurveTo(fx - 16, fy - 128, fx + 4, fy - 122);
+  ctx.lineTo(fx - 30, fy - 112); ctx.lineTo(fx - 14, fy - 106); ctx.quadraticCurveTo(fx + 4, fy - 118, fx + 18, fy - 106); ctx.lineTo(fx + 18, fy - 112); ctx.quadraticCurveTo(fx + 4, fy - 134, fx - 22, fy - 112); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(fx - 6, fy - 122); ctx.quadraticCurveTo(fx - 26, fy - 140, fx - 40, fy - 132); ctx.stroke();
+  ctx.fillStyle = '#222'; circle(fx + 9, fy - 104, 2);
+  ctx.strokeStyle = '#7a4a22'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(fx + 7, fy - 96, 5, 0.2, 1.4); ctx.stroke();
+  // bow & arms
+  const nock = -3.3 - pull * 42;
+  const nw = { x: grip.x + dir.x * nock, y: grip.y + dir.y * nock };
+  ctx.strokeStyle = '#2f7d32'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(SHOULDER.x, SHOULDER.y); ctx.lineTo(grip.x, grip.y); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(SHOULDER.x - 4, SHOULDER.y + 2); ctx.lineTo(nw.x, nw.y); ctx.stroke();
+  ctx.fillStyle = '#f1c27d'; circle(grip.x, grip.y, 4.5); circle(nw.x, nw.y, 4.5);
+  ctx.save(); ctx.translate(grip.x, grip.y); ctx.rotate(ang);
+  ctx.strokeStyle = '#8b5a2b'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(-30, 0, 46, -0.95, 0.95); ctx.stroke();
+  ctx.strokeStyle = '#eee'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(-3.3, -37.5); ctx.lineTo(nock, 0); ctx.lineTo(-3.3, 37.5); ctx.stroke();
+  ctx.restore();
+  if (G.screen === 'play' && G.phase === 'aim' && G.arrowsLeft > 0) drawArrowShape(grip.x + dir.x * (nock + 52), grip.y + dir.y * (nock + 52), ang, 52);
+}
+function drawHat(v, g){
+  const ht = g.headTop, tp = g.hatTop;
+  ctx.fillStyle = v.hatCol;
+  switch (v.hat){
+    case 'pointy':
+      ctx.beginPath(); ctx.moveTo(-18, ht + 8); ctx.lineTo(18, ht + 8); ctx.lineTo(2, tp); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#f4c430'; ctx.fillRect(-17, ht + 3, 34, 5); break;
+    case 'beret':
+      ctx.beginPath(); ctx.ellipse(0, ht + 3, 21, 9, -0.1, Math.PI, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0, ht + 3, 21, 4, -0.1, 0, Math.PI * 2); ctx.fill(); circle(1, tp + 1, 3); break;
+    case 'bucket':
+      ctx.fillRect(-13, tp, 26, ht + 6 - tp); ctx.fillStyle = '#00000033'; ctx.fillRect(-13, ht - 2, 26, 4);
+      ctx.fillStyle = v.hatCol; ctx.fillRect(-21, ht + 3, 42, 5); break;
+    case 'feather':
+      ctx.beginPath(); ctx.ellipse(0, ht + 5, 18, 11, 0, Math.PI, Math.PI * 2); ctx.fill(); ctx.fillRect(-20, ht + 3, 40, 4);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(8, ht); ctx.quadraticCurveTo(22, tp - 2, 30, tp + 2); ctx.stroke(); break;
+    case 'hood':
+      ctx.beginPath(); ctx.moveTo(-22, g.headC + 10); ctx.quadraticCurveTo(-24, tp - 2, 4, tp);
+      ctx.quadraticCurveTo(26, tp + 2, 22, g.headC + 10); ctx.lineTo(15, g.headC + 10);
+      ctx.quadraticCurveTo(14, ht + 4, 0, ht + 4); ctx.quadraticCurveTo(-14, ht + 4, -15, g.headC + 10); ctx.closePath(); ctx.fill(); break;
+    case 'crown':
+      ctx.fillStyle = '#f4c430';
+      ctx.beginPath(); ctx.moveTo(-14, ht + 6); ctx.lineTo(-14, tp + 4); ctx.lineTo(-7, tp + 11); ctx.lineTo(0, tp);
+      ctx.lineTo(7, tp + 11); ctx.lineTo(14, tp + 4); ctx.lineTo(14, ht + 6); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = v.hatCol; circle(0, ht, 3); break;
+  }
+}
+function drawFace(v, g, t){
+  const ey = g.headC - 3;
+  ctx.fillStyle = '#00000022'; circle(-15, g.headC + 2, 4);
+  ctx.strokeStyle = '#222'; ctx.fillStyle = '#222'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  if (v.faint > 0){
+    for (const ex of [-9, 2]){ ctx.beginPath(); ctx.moveTo(ex - 3, ey - 3); ctx.lineTo(ex + 3, ey + 3); ctx.moveTo(ex + 3, ey - 3); ctx.lineTo(ex - 3, ey + 3); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(-10, g.headC + 9); for (let i = 1; i <= 4; i++) ctx.lineTo(-10 + i * 4, g.headC + 9 + (i % 2 ? -2 : 2)); ctx.stroke();
+    return;
+  }
+  const blink = ((t + v.seed) % 3.7) < 0.12;
+  if (v.mood === 'ouch'){ ctx.fillStyle = '#fff'; circle(-9, ey, 4); circle(2, ey, 4); ctx.fillStyle = '#222'; circle(-9, ey, 1.6); circle(2, ey, 1.6); }
+  else if (blink){ ctx.beginPath(); ctx.moveTo(-12, ey); ctx.lineTo(-6, ey); ctx.moveTo(-1, ey); ctx.lineTo(5, ey); ctx.stroke(); }
+  else { const look = v.mood === 'caught' ? 3 : 0; circle(-9 + look, ey, 2.3); circle(2 + look, ey, 2.3); }
+  const my = g.headC + 8;
+  if (v.mood === 'ouch'){ ctx.fillStyle = '#5a1a1a'; circle(-4, my, 4.5); }
+  else if (v.mood === 'caught'){
+    ctx.beginPath(); ctx.moveTo(-11, my); for (let i = 1; i <= 4; i++) ctx.lineTo(-11 + i * 4, my + (i % 2 ? -2 : 2)); ctx.stroke();
+    ctx.fillStyle = '#7fd3ff'; ctx.beginPath(); ctx.moveTo(10, g.headC - 12); ctx.quadraticCurveTo(15, g.headC - 3, 10, g.headC - 2); ctx.quadraticCurveTo(5, g.headC - 3, 10, g.headC - 12); ctx.fill();
+  }
+  else if (v.mood === 'smug'){ ctx.beginPath(); ctx.arc(-4, my - 4, 7, 0.3, Math.PI - 0.3); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.arc(-4, my - 3, 5, 0.4, Math.PI - 0.4); ctx.stroke(); }
+}
+function drawVillager(v, t){
+  const g = geo(v);
+  const x = v.x + v.run, y = GROUND - v.hop;
+  ctx.fillStyle = '#00000025'; ctx.beginPath(); ctx.ellipse(x + v.faint * 40, GROUND + 2, 24 + v.faint * 40, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.save(); ctx.translate(x, y - (v.running ? Math.abs(Math.sin(t * 18)) * 8 : 0));
+  if (v.running) ctx.scale(-1, 1); // flee to the right, facing away
+  if (v.faint > 0) ctx.rotate(bounce(v.faint) * Math.PI / 2 * 0.97);
+  const sw = v.running ? Math.sin(t * 18) * 9 : 0;
+  ctx.fillStyle = '#4a3424'; ctx.fillRect(-12 + sw, -34, 9, 34); ctx.fillRect(3 - sw, -34, 9, 34);
+  ctx.fillStyle = '#2b1b10'; rr(-16 + sw, -6, 14, 7, 3); ctx.fill(); rr(-1 - sw, -6, 14, 7, 3); ctx.fill();
+  ctx.fillStyle = v.tunic;
+  ctx.beginPath(); ctx.moveTo(-24, -30); ctx.lineTo(24, -30); ctx.lineTo(17, g.shoulder); ctx.lineTo(-17, g.shoulder); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#5b3a1e'; ctx.fillRect(-21, -46, 42, 6);
+  ctx.strokeStyle = v.tunic; ctx.lineWidth = 8; ctx.lineCap = 'round'; ctx.beginPath();
+  if (v.hasPie){ ctx.moveTo(-14, g.shoulder + 6); ctx.lineTo(-18, g.headTop - 4); ctx.moveTo(14, g.shoulder + 6); ctx.lineTo(18, g.headTop - 4); }
+  else if (v.mood === 'ouch'){ ctx.moveTo(-14, g.shoulder + 6); ctx.lineTo(-30, g.shoulder - 14); ctx.moveTo(14, g.shoulder + 6); ctx.lineTo(30, g.shoulder - 14); }
+  else { ctx.moveTo(-15, g.shoulder + 6); ctx.lineTo(-24, -40); ctx.moveTo(15, g.shoulder + 6); ctx.lineTo(24, -40); }
+  ctx.stroke();
+  ctx.fillStyle = v.skin; circle(0, g.headC, 17);
+  if (v.beard){ ctx.fillStyle = '#6b4423'; ctx.beginPath(); ctx.arc(-2, g.headC + 5, 14, 0.15, Math.PI - 0.15); ctx.fill(); }
+  drawFace(v, g, t);
+  drawHat(v, g);
+  for (const s of v.stuck) drawArrowShape(s.lx, s.ly, s.ang, 46);
+  if (v.apple) drawApple(0, g.appleY);
+  if (v.hasPie) drawPie(0, g.headTop - 12, 1.1);
+  if (v.faint >= 1){
+    for (let i = 0; i < 3; i++){
+      const a = t * 3 + i * 2.1;
+      ctx.fillStyle = '#f4c430'; ctx.font = `20px ${FONT_B}`; ctx.textAlign = 'center';
+      ctx.fillText('★', Math.cos(a) * 18, g.headTop - 6 + Math.sin(a) * 6);
+    }
+  }
+  ctx.restore();
+  // name tag
+  if (!v.running){
+    ctx.font = `800 14px ${FONT_B}`; const label = `${v.letter} · ${v.name}`;
+    const tw = ctx.measureText(label).width + 14;
+    ctx.fillStyle = '#f6e7c8'; rr(v.x - tw / 2, GROUND + 6, tw, 22, 5); ctx.fill();
+    ctx.strokeStyle = '#8b5a2b'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#5b2a0e'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, v.x, GROUND + 17.5);
+    ctx.textBaseline = 'alphabetic';
+  }
+}
+function drawBubble(v, st){
+  if (v.running || !st) return;
+  const g = geo(v), bw = 160, lh = 18;
+  const lines = wrap(`“${st.text}”`, bw - 18, `600 15px ${FONT_B}`);
+  const bh = 26 + lines.length * lh + 8;
+  const bx = Math.max(6, Math.min(W - bw - 6, v.x - bw / 2)), by = GROUND + g.appleY - 14 - 26 - bh;
+  ctx.save();
+  if (v.fainted) ctx.globalAlpha = 0.55;
+  ctx.fillStyle = 'rgba(255,250,236,0.96)'; rr(bx, by, bw, bh, 12); ctx.fill();
+  ctx.strokeStyle = '#5b3a1e'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,250,236,0.96)';
+  ctx.beginPath(); ctx.moveTo(v.x - 9, by + bh - 1); ctx.lineTo(v.x + 9, by + bh - 1); ctx.lineTo(v.x - 2, by + bh + 16); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(v.x - 9, by + bh); ctx.lineTo(v.x - 2, by + bh + 16); ctx.lineTo(v.x + 9, by + bh); ctx.stroke();
+  ctx.textAlign = 'center';
+  let hs = 15; const head = `${v.letter} — ${v.name}`;
+  do { ctx.font = `800 ${hs}px ${FONT_B}`; } while (ctx.measureText(head).width > bw - 14 && --hs > 10);
+  ctx.fillStyle = '#8b1a1a'; ctx.fillText(head, v.x + (bx - (v.x - bw / 2)), by + 19);
+  ctx.font = `600 15px ${FONT_B}`; ctx.fillStyle = '#2b1d12';
+  lines.forEach((l, i) => ctx.fillText(l, bx + bw / 2, by + 40 + i * lh));
+  ctx.restore();
+}
+function drawPreview(){
+  const a = aimVelocity(G.aim);
+  if (!a) return;
+  // Full path up to whatever the arrow would hit first, so it can reach the farthest apple.
+  const s = launchState(a);
+  let pts = [];
+  if (MODE === 'hard'){
+    // Hard: ignore wind and targets, show only the first quarter of the arc.
+    for (let i = 1; i <= 3000; i++){
+      stepArrow(s, 0);
+      if (s.y >= groundAt(s.x) || s.x > W + 60 || s.x < -60 || s.y > H + 60) break;
+      if (i % 10 === 0) pts.push([s.x, s.y]);
+    }
+    pts = pts.slice(0, Math.ceil(pts.length * 0.25));
+  } else {
+    for (let i = 1; i <= 3000; i++){
+      stepArrow(s);
+      if (arrowHit(s)) break;
+      if (i % 10 === 0) pts.push([s.x, s.y]);
+    }
+    pts.push([s.x, s.y]);
+  }
+  pts.forEach(([x, y], i) => {
+    ctx.fillStyle = `rgba(255,255,255,${0.95 - i / pts.length * 0.45})`; circle(x, y, 4);
+    ctx.strokeStyle = 'rgba(43,29,18,0.4)'; ctx.lineWidth = 1; ctx.stroke();
+  });
+  // pull indicator
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.setLineDash([6, 6]); ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(G.aim.sx, G.aim.sy); ctx.lineTo(G.aim.x, G.aim.y); ctx.stroke(); ctx.setLineDash([]);
+}
+function drawKing(t){
+  const k = G.king; if (k.t <= 0) return;
+  const el = k.dur - k.t, inT = Math.min(1, el * 4), outT = Math.min(1, k.t * 4);
+  const y = 56 - (1 - Math.min(inT, outT)) * 200, x = 1078, w = 194, h = 146;
+  const shake = Math.sin(t * 50) * 2.5;
+  ctx.save(); ctx.translate(shake, 0);
+  ctx.fillStyle = '#f6e7c8'; rr(x, y, w, h, 10); ctx.fill(); ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 5; ctx.stroke();
+  ctx.fillStyle = '#8b1a1a'; ctx.font = `20px ${FONT_T}`; ctx.textAlign = 'center'; ctx.fillText('His Majesty', x + w / 2, y + 22);
+  const cx = x + 64, cy = y + 92;
+  ctx.fillStyle = '#7d3c98'; ctx.fillRect(cx - 36, cy + 26, 72, 30);
+  ctx.fillStyle = `rgb(${230},${120 - Math.sin(t * 8) * 20},${100})`; circle(cx, cy + 6, 26);
+  ctx.fillStyle = '#eee'; ctx.beginPath(); ctx.arc(cx, cy + 14, 22, 0.2, Math.PI - 0.2); ctx.fill();
+  ctx.strokeStyle = '#222'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(cx - 16, cy - 6); ctx.lineTo(cx - 5, cy - 2); ctx.moveTo(cx + 16, cy - 6); ctx.lineTo(cx + 5, cy - 2); ctx.stroke();
+  ctx.fillStyle = '#222'; circle(cx - 9, cy + 2, 2.5); circle(cx + 9, cy + 2, 2.5);
+  ctx.fillStyle = '#5a1a1a'; ctx.beginPath(); ctx.ellipse(cx, cy + 16, 7, 5 + Math.abs(Math.sin(t * 14)) * 3, 0, 0, Math.PI * 2); ctx.fill();
+  // tall royal hat with crown band, skewered
+  ctx.fillStyle = '#7d3c98'; ctx.fillRect(cx - 18, cy - 50, 36, 34);
+  ctx.fillStyle = '#f4c430'; ctx.beginPath(); ctx.moveTo(cx - 22, cy - 14); ctx.lineTo(cx - 22, cy - 30); ctx.lineTo(cx - 11, cy - 22);
+  ctx.lineTo(cx, cy - 34); ctx.lineTo(cx + 11, cy - 22); ctx.lineTo(cx + 22, cy - 30); ctx.lineTo(cx + 22, cy - 14); ctx.closePath(); ctx.fill();
+  drawArrowShape(cx + 34, cy - 40, 0.15, 74);
+  ctx.fillStyle = '#c0392b'; ctx.font = `24px ${FONT_T}`; ctx.fillText('HOW RUDE!', x + 146, y + 76 + Math.sin(t * 20) * 2);
+  ctx.font = `800 14px ${FONT_B}`; ctx.fillText('MY HAT!!', x + 146, y + 100);
+  ctx.restore();
+}
+function drawTopBar(){
+  ctx.fillStyle = '#f6e7c8'; ctx.fillRect(0, 0, W, 46);
+  ctx.fillStyle = '#c0392b'; ctx.fillRect(0, 46, W, 4); ctx.fillStyle = '#f4c430'; ctx.fillRect(0, 50, W, 2);
+  ctx.fillStyle = '#5b2a0e'; ctx.textAlign = 'left'; ctx.font = `28px ${FONT_T}`;
+  if (G.screen === 'play'){
+    ctx.fillText(`Round ${G.round}/10`, 20, 33);
+    ctx.fillText(`Score: ${G.score}`, 210, 33);
+    ctx.fillText('Arrows:', 420, 33);
+    for (let i = 0; i < 3; i++){
+      ctx.save(); ctx.globalAlpha = i < G.arrowsLeft ? 1 : 0.2; drawArrowShape(560 + i * 22, 38, Math.PI / 2, 28); ctx.restore();
+    }
+    ctx.fillText(MODE === 'hard' ? 'Hard' : 'Easy', 1050, 33);
+    ctx.fillText('Wind:', 660, 33);
+    const s = Math.round(Math.abs(G.wind) / 20);
+    if (!s){ ctx.font = `800 20px ${FONT_B}`; ctx.fillText('calm', 732, 31); }
+    else {
+      const dir = Math.sign(G.wind), len = 20 + s * 9, cx = 760 + 50;
+      ctx.strokeStyle = '#2e86c1'; ctx.fillStyle = '#2e86c1'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(cx - dir * len / 2, 23); ctx.lineTo(cx + dir * len / 2, 23); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + dir * (len / 2 + 9), 23); ctx.lineTo(cx + dir * (len / 2 - 3), 14); ctx.lineTo(cx + dir * (len / 2 - 3), 32); ctx.fill();
+      ctx.fillStyle = '#5b2a0e'; ctx.font = `800 20px ${FONT_B}`; ctx.fillText(String(s), 880, 31);
+    }
+  } else {
+    ctx.fillText('Robin Hoodwinked', 20, 33);
+    ctx.font = `800 18px ${FONT_B}`; ctx.fillText(`Best: ${G.best}`, 260, 30);
+  }
+  // mute & gear
+  for (const b of [BTN_MUTE, BTN_GEAR]){ ctx.fillStyle = '#8b5a2b'; circle(b.x, b.y, b.r); }
+  ctx.fillStyle = '#f6e7c8';
+  const m = BTN_MUTE;
+  ctx.beginPath(); ctx.moveTo(m.x - 9, m.y - 4); ctx.lineTo(m.x - 4, m.y - 4); ctx.lineTo(m.x + 3, m.y - 10); ctx.lineTo(m.x + 3, m.y + 10); ctx.lineTo(m.x - 4, m.y + 4); ctx.lineTo(m.x - 9, m.y + 4); ctx.fill();
+  ctx.strokeStyle = '#f6e7c8'; ctx.lineWidth = 2;
+  if (muted){ ctx.beginPath(); ctx.moveTo(m.x + 6, m.y - 5); ctx.lineTo(m.x + 12, m.y + 5); ctx.moveTo(m.x + 12, m.y - 5); ctx.lineTo(m.x + 6, m.y + 5); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.arc(m.x + 4, m.y, 7, -0.8, 0.8); ctx.stroke(); }
+  const gb = BTN_GEAR;
+  ctx.save(); ctx.translate(gb.x, gb.y); ctx.fillStyle = '#f6e7c8';
+  for (let i = 0; i < 8; i++){ ctx.rotate(Math.PI / 4); ctx.fillRect(-2.5, -11, 5, 6); }
+  circle(0, 0, 7.5); ctx.fillStyle = '#8b5a2b'; circle(0, 0, 3.5); ctx.restore();
+}
+function drawHerald(t){
+  const x = 80, y = 652, w = 1120, h = 62;
+  ctx.fillStyle = '#e8d3a8'; circle(x, y + h / 2, h / 2 - 2); circle(x + w, y + h / 2, h / 2 - 2);
+  ctx.fillStyle = '#f6e7c8'; ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = '#8b5a2b'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = '#c9b085'; circle(x, y + h / 2, 8); circle(x + w, y + h / 2, 8);
+  // herald icon
+  const hx = x + 42, hy = y + 34;
+  ctx.fillStyle = '#f1c27d'; circle(hx, hy, 15);
+  ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.ellipse(hx, hy - 12, 17, 8, 0, Math.PI, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#f4c430'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(hx + 6, hy - 16); ctx.quadraticCurveTo(hx + 18, hy - 32, hx + 26, hy - 26); ctx.stroke();
+  ctx.fillStyle = '#222'; circle(hx + 6, hy - 2, 1.8);
+  ctx.fillStyle = '#f4c430'; ctx.beginPath(); ctx.moveTo(hx + 12, hy + 5); ctx.lineTo(hx + 34, hy - 2); ctx.lineTo(hx + 34, hy + 16); ctx.closePath(); ctx.fill();
+  const txt = G.herald.text; if (!txt) return;
+  let fs = 22, lines;
+  do { lines = wrap(txt, 960, `700 ${fs}px ${FONT_B}`); } while (lines.length > 2 && --fs > 14);
+  ctx.font = `700 ${fs}px ${FONT_B}`; ctx.fillStyle = '#3b230f'; ctx.textAlign = 'left';
+  let left = Math.floor(G.herald.shown);
+  const cx = x + w / 2 + 30, lh = fs + 4, y0 = y + h / 2 - (lines.length - 1) * lh / 2 + fs * 0.35;
+  lines.forEach((l, i) => {
+    if (left <= 0) return;
+    ctx.fillText(l.slice(0, left), cx - ctx.measureText(l).width / 2, y0 + i * lh);
+    left -= l.length + 1;
+  });
+}
+function drawParticles(){
+  for (const p of G.particles){
+    const a = Math.max(0, Math.min(1, p.life / p.max * 1.5));
+    ctx.globalAlpha = a;
+    if (p.type === 'text'){
+      ctx.font = `30px ${FONT_T}`; ctx.textAlign = 'center'; ctx.lineWidth = 4; ctx.strokeStyle = '#fff';
+      ctx.strokeText(p.text, p.x, p.y); ctx.fillStyle = p.color; ctx.fillText(p.text, p.x, p.y);
+    } else if (p.type === 'circ'){ ctx.fillStyle = p.color; circle(p.x, p.y, p.size); }
+    else {
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.color;
+      const sy = p.type === 'conf' ? Math.abs(Math.cos(p.rot * 2)) : 1;
+      ctx.fillRect(-p.size / 2, -p.size * sy / 2, p.size, p.size * 0.6 * sy + 1); ctx.restore();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+function drawButton(b, label, t){
+  const pulse = 1 + Math.sin(t * 4) * 0.03;
+  ctx.save(); ctx.translate(b.x + b.w / 2, b.y + b.h / 2); ctx.scale(pulse, pulse);
+  ctx.fillStyle = '#8b1a1a'; rr(-b.w / 2, -b.h / 2 + 5, b.w, b.h, 14); ctx.fill();
+  ctx.fillStyle = '#c0392b'; rr(-b.w / 2, -b.h / 2, b.w, b.h, 14); ctx.fill();
+  ctx.strokeStyle = '#f4c430'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.font = `38px ${FONT_T}`; ctx.textAlign = 'center'; ctx.fillText(label, 0, 13);
+  ctx.restore();
+}
+const MODEBTN = { x: 470, y: 424, w: 340, h: 34 };
+function drawModeToggle(){
+  const b = MODEBTN;
+  ctx.fillStyle = MODE === 'hard' ? '#8b1a1a' : '#1e8449'; rr(b.x, b.y, b.w, b.h, 17); ctx.fill();
+  ctx.font = `800 18px ${FONT_B}`; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
+  ctx.fillText(`Aiming: ${MODE === 'hard' ? 'HARD (short dots, no wind)' : 'EASY (full path)'}  ⇄`, b.x + b.w / 2, b.y + 23);
+}
+function drawTitle(t){
+  ctx.fillStyle = 'rgba(43,29,18,0.35)'; ctx.fillRect(0, 52, W, 598);
+  ctx.fillStyle = '#f6e7c8'; rr(300, 110, 680, 450, 20); ctx.fill(); ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 6; ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.font = `92px ${FONT_T}`; ctx.lineWidth = 8; ctx.strokeStyle = '#5b2a0e';
+  const ty = 210 + Math.sin(t * 2) * 3;
+  ctx.strokeText('ROBIN HOODWINKED', 640, ty); ctx.fillStyle = '#f4c430'; ctx.fillText('ROBIN HOODWINKED', 640, ty);
+  ctx.font = `40px ${FONT_T}`; ctx.fillStyle = '#8b1a1a'; ctx.fillText('— Shoot the liar —', 640, 262);
+  ctx.font = `600 20px ${FONT_B}`; ctx.fillStyle = '#3b230f';
+  ['Someone stole the King\'s pie! Three villagers, one thief.',
+   'The thief always LIES. The innocent always tell the TRUTH.',
+   'Work out the liar, then shoot the apple off their head.',
+   'Drag back from the archer to aim · release to shoot · M = mute'].forEach((l, i) => ctx.fillText(l, 640, 310 + i * 32));
+  drawButton(PLAYBTN, 'Play', t);
+  if (G.best){ ctx.font = `700 18px ${FONT_B}`; ctx.fillStyle = '#5b2a0e'; ctx.fillText(`Best score: ${G.best}`, 640, 576 - 30); }
+  drawModeToggle();
+}
+function drawEnd(t){
+  ctx.fillStyle = 'rgba(43,29,18,0.45)'; ctx.fillRect(0, 52, W, 598);
+  ctx.fillStyle = '#f6e7c8'; rr(330, 100, 620, 470, 20); ctx.fill(); ctx.strokeStyle = '#c9a227'; ctx.lineWidth = 6; ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.font = `60px ${FONT_T}`; ctx.fillStyle = '#8b1a1a'; ctx.fillText('The Tournament Ends!', 640, 175);
+  ctx.font = `800 30px ${FONT_B}`; ctx.fillStyle = '#3b230f'; ctx.fillText(`Final score: ${G.score}`, 640, 232);
+  ctx.font = `20px ${FONT_B}`; ctx.fillText('Your rank:', 640, 275);
+  ctx.font = `64px ${FONT_T}`; ctx.lineWidth = 6; ctx.strokeStyle = '#5b2a0e';
+  ctx.strokeText(G.rank, 640, 345); ctx.fillStyle = '#f4c430'; ctx.fillText(G.rank, 640, 345);
+  ctx.font = `700 20px ${FONT_B}`; ctx.fillStyle = G.newBest ? '#1e8449' : '#5b2a0e';
+  ctx.fillText(G.newBest ? `New best score! (${G.best})` : `Best score: ${G.best}`, 640, 390);
+  ctx.font = `italic 600 19px ${FONT_B}`; ctx.fillStyle = '#3b230f';
+  wrap(G.endLine, 540, `italic 600 19px ${FONT_B}`).forEach((l, i) => ctx.fillText(l, 640, 428 + i * 24));
+  drawButton(PLAYBTN, 'Play again', t);
+}
+function draw(){
+  const t = G.time;
+  ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+  drawBackground(t);
+  drawStuckGround();
+  drawHill();
+  drawCrowd(t);
+  drawArcher(t);
+  const order = [0, 1, 2].sort((a, b) => G.vill[a].running - G.vill[b].running);
+  for (const i of order) drawVillager(G.vill[i], t);
+  if (G.pie) drawPie(G.pie.x, G.pie.y);
+  if (G.arrow) drawArrowShape(G.arrow.x, G.arrow.y, G.arrow.ang);
+  if (G.screen === 'play'){
+    G.vill.forEach((v, i) => drawBubble(v, G.stmts[i]));
+    drawPreview();
+  }
+  drawParticles();
+  drawKing(t);
+  drawTopBar();
+  drawHerald(t);
+  if (G.screen === 'play' && G.banner.t > 0){
+    const a = Math.min(1, G.banner.t * 2), s = 1 + (1.8 - G.banner.t) * 0.08;
+    ctx.save(); ctx.globalAlpha = a; ctx.translate(560, 250); ctx.scale(s, s);
+    ctx.font = `86px ${FONT_T}`; ctx.textAlign = 'center'; ctx.lineWidth = 8; ctx.strokeStyle = '#5b2a0e';
+    ctx.strokeText(G.banner.text, 0, 0); ctx.fillStyle = '#f4c430'; ctx.fillText(G.banner.text, 0, 0); ctx.restore();
+  }
+  if (G.screen === 'title') drawTitle(t);
+  if (G.screen === 'end') drawEnd(t);
+}
+
+// ====================================================================
+// HERALD (local lines, optionally Claude)
+// ====================================================================
+let heraldId = 0;
+function setHerald(text){ G.herald = { text, shown: 0 }; }
+function cleanLine(l){
+  l = l.split('\n').map(s => s.trim()).filter(Boolean)[0] || '';
+  return l.replace(/^["'“”]+|["'“”]+$/g, '').slice(0, 180);
+}
+function heraldSay(kind, vars, eventDesc){
+  const local = fill(pick(LINES[kind]), vars);
+  const id = ++heraldId;
+  if (!(API_KEY && OPT.herald)){ setHerald(local); return; }
+  setHerald('*The herald clears his throat…*');
+  claude(HERALD_SYS, eventDesc, 70, 3000).then(line => {
+    if (id !== heraldId) return;
+    setHerald(line ? cleanLine(line) || local : local);
+  });
+}
+
+// ====================================================================
+// CLAUDE (stretch) — key lives in memory only
+// ====================================================================
+let API_KEY = '';
+const OPT = { herald: true, rounds: true };
+const HERALD_SYS = 'You are the pompous, sarcastic royal herald at a chaotic medieval archery fair. ' +
+  'An archer must work out which villager stole the King\'s pie (the thief always lies) and shoot the apple off the thief\'s head. ' +
+  'Given a game event, reply with ONE short, funny line of at most 20 words. Use simple, everyday English a 10-year-old understands. No quotes, no stage directions, family-friendly.';
+const ROUND_SYS = 'You write logic puzzles for a medieval comedy archery game. Reply with ONLY a JSON object, no prose, no code fences, in exactly this shape:\n' +
+  '{"villagers":[{"name":"..."},{"name":"..."},{"name":"..."}],"statements":[{"speaker":0,"claim":{"type":"is_thief","target":1},"text":"..."},{"speaker":1,"claim":{"type":"not_thief","target":1},"text":"..."},{"speaker":2,"claim":{"type":"not_thief","target":0},"text":"..."}]}\n' +
+  'Rules: exactly one of the three villagers stole the King\'s pie. The thief\'s statement is FALSE; both innocent villagers\' statements are TRUE. ' +
+  'claim.type is "is_thief" (the target stole the pie) or "not_thief" (the target did not); target is 0, 1 or 2 and may be the speaker themself. ' +
+  'Exactly one villager must be consistent as the thief. Each villager speaks exactly once. ' +
+  'Names: silly medieval names, max 18 characters. Text: funny, in simple everyday English a 10-year-old understands, max 60 characters, must say exactly what the claim says, refer to others by name and to themself as "I".';
+async function claude(system, user, maxTokens, timeoutMs){
+  if (!API_KEY) return null;
+  const ctl = new AbortController(), tm = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', signal: ctl.signal,
+      headers: { 'x-api-key': API_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json',
+                 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: 'claude-haiku-5-5', max_tokens: maxTokens, system, messages: [{ role: 'user', content: user }] }),
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const text = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+    return text || null;
+  } catch (e) { return null; }
+  finally { clearTimeout(tm); }
+}
+function validateRound(d){
+  if (!d || !Array.isArray(d.villagers) || !Array.isArray(d.statements) || d.villagers.length !== 3 || d.statements.length !== 3) return null;
+  const villagers = d.villagers.map(v => ({ name: String(v && v.name || '').trim().slice(0, 22) }));
+  if (villagers.some(v => !v.name)) return null;
+  const seen = new Set(), statements = [];
+  for (const s of d.statements){
+    if (!s || !s.claim) return null;
+    const sp = s.speaker, tg = s.claim.target, ty = s.claim.type;
+    if (![0, 1, 2].includes(sp) || ![0, 1, 2].includes(tg) || !['is_thief', 'not_thief'].includes(ty) || seen.has(sp)) return null;
+    if (typeof s.text !== 'string' || !s.text.trim()) return null;
+    seen.add(sp);
+    statements.push({ speaker: sp, claim: { type: ty, target: tg }, text: s.text.trim().slice(0, 90) });
+  }
+  const r = { villagers, statements };
+  return solve(r).length === 1 ? r : null;
+}
+async function fetchGenRound(n){
+  if (!API_KEY || !OPT.rounds) return;
+  const level = n <= 3 ? 'Easy: an honest villager directly accuses the real thief.'
+              : n <= 6 ? 'Medium: mix accusations and denials.'
+              : 'Hard: use mostly denials and "X is innocent" claims so the player must rule people out.';
+  const txt = await claude(ROUND_SYS, `Write round ${n} of 10. ${level} Use fresh names. Random seed ${Math.floor(Math.random() * 1e6)}.`, 500, 15000);
+  if (!txt) return;
+  let data;
+  try { data = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); } catch (e) { return; }
+  const r = validateRound(data);
+  const stillWanted = G.screen === 'play' ? G.round < n : n === 1;
+  if (r && stillWanted) G.gen = { forRound: n, data: r };
+}
+
+// settings panel
+const $ = id => document.getElementById(id);
+function openSettings(){ $('settings').hidden = false; $('key').value = API_KEY; $('optHerald').checked = OPT.herald; $('optRounds').checked = OPT.rounds; document.querySelector(`input[name=mode][value=${MODE}]`).checked = true; $('status').textContent = API_KEY ? 'A key is set (in memory only).' : 'No key: the herald uses his built-in jokes.'; }
+function closeSettings(){ $('settings').hidden = true; }
+$('btnSave').onclick = () => {
+  API_KEY = $('key').value.trim(); OPT.herald = $('optHerald').checked; OPT.rounds = $('optRounds').checked;
+  $('status').textContent = API_KEY ? 'Saved. Claude will be consulted (with offline fallback).' : 'No key: offline mode.';
+  if (API_KEY) fetchGenRound(G.screen === 'play' ? G.round + 1 : 1);
+  setTimeout(closeSettings, 700);
+};
+$('btnForget').onclick = () => { API_KEY = ''; G.gen = null; $('key').value = ''; $('status').textContent = 'Key forgotten. Offline mode.'; };
+$('btnClose').onclick = closeSettings;
+document.querySelectorAll('input[name=mode]').forEach(r => r.addEventListener('change', () => setMode(r.value)));
+$('settings').addEventListener('pointerdown', e => { if (e.target.id === 'settings') closeSettings(); });
+
+// ====================================================================
+// INPUT
+// ====================================================================
+function toLogical(e){
+  const r = cv.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height };
+}
+const inRect = (p, b) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
+const inCircle = (p, b) => Math.hypot(p.x - b.x, p.y - b.y) <= b.r + 6;
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault(); audio();
+  const p = toLogical(e);
+  if (inCircle(p, BTN_GEAR)){ openSettings(); return; }
+  if (inCircle(p, BTN_MUTE)){ toggleMute(); return; }
+  if (G.screen !== 'play'){
+    if (G.screen === 'title' && inRect(p, MODEBTN)) setMode(MODE === 'hard' ? 'easy' : 'hard');
+    else if (inRect(p, PLAYBTN)) startGame();
+    return;
+  }
+  if (G.phase === 'aim' && G.arrowsLeft > 0 && !G.arrow){
+    G.aim = { sx: p.x, sy: p.y, x: p.x, y: p.y, id: e.pointerId };
+    try { cv.setPointerCapture(e.pointerId); } catch (err) {}
+  }
+});
+cv.addEventListener('pointermove', e => {
+  if (!G.aim || e.pointerId !== G.aim.id) return;
+  const p = toLogical(e); G.aim.x = p.x; G.aim.y = p.y;
+});
+cv.addEventListener('pointerup', e => {
+  if (!G.aim || e.pointerId !== G.aim.id) return;
+  const p = toLogical(e); G.aim.x = p.x; G.aim.y = p.y;
+  if (G.phase === 'aim') release(); else G.aim = null;
+});
+cv.addEventListener('pointercancel', () => { G.aim = null; });
+cv.addEventListener('contextmenu', e => e.preventDefault());
+addEventListener('keydown', e => {
+  if (e.target && e.target.tagName === 'INPUT') { if (e.key === 'Escape') closeSettings(); return; }
+  if (e.key === 'm' || e.key === 'M') toggleMute();
+  else if (e.key === 'Escape') closeSettings();
+  else if ((e.key === 'Enter' || e.key === ' ') && G.screen !== 'play'){ e.preventDefault(); audio(); startGame(); }
+});
+
+// ====================================================================
+// PHONE PANEL (portrait): statements & herald in readable HTML
+// ====================================================================
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let infoCache = '';
+function updateInfo(){
+  let html;
+  if (G.screen === 'play'){
+    const s = Math.round(Math.abs(G.wind) / 20);
+    html = `<div class="bar">Round ${G.round}/10 · Score ${G.score} · Arrows ${G.arrowsLeft} · Wind ${s ? (G.wind < 0 ? '← ' : '→ ') + s : 'calm'}</div>` +
+      G.vill.map((v, i) => `<div class="st"><b>${v.letter} — ${esc(v.name)}${v.fainted ? ' (fainted)' : ''}:</b> “${esc(G.stmts[i] ? G.stmts[i].text : '')}”</div>`).join('');
+  } else if (G.screen === 'end'){
+    html = `<div class="bar">Final score ${G.score} — ${esc(G.rank)}</div>`;
+  } else {
+    html = `<div class="bar">Robin Hoodwinked — Shoot the liar</div><div>The thief always lies; the innocent tell the truth. Tap Play, then drag back from the archer to aim. Rotate your phone sideways for a bigger field.</div>`;
+  }
+  html += `<div class="herald">📜 ${esc(G.herald.text)}</div>`;
+  if (html !== infoCache){ infoCache = html; $('info').innerHTML = html; }
+}
+
+// ====================================================================
+// LOOP
+// ====================================================================
+let last = performance.now(), infoT = 0;
+setHerald('Welcome, archer! Find the liar and save the King\'s pie!');
+function frame(now){
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  update(dt);
+  draw();
+  if ((infoT -= dt) <= 0){ infoT = 0.25; updateInfo(); }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
