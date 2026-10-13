@@ -11,7 +11,7 @@
 2. Tune difficulty (MAXSPEED / wind strength in `startRound`) if too easy/hard.
 
 ## Log
-- 2026-10-12 — Published to GitHub Pages (public repo babusovereign/robin-hoodwinked); README + CLAUDE.md implementation notes added.
+- 2026-10-12 — Published to GitHub Pages at https://babusovereign.com/robin-hoodwinked/ (public repo babusovereign/robin-hoodwinked); README + CLAUDE.md implementation notes added.
 - 2026-10-12 — Added Easy/Hard aiming mode (⚙ panel radio, title-screen toggle, top-bar label; saved in localStorage). Easy = full exact path w/ wind; Hard = spec 25% arc, no wind.
 - 2026-10-12 — Aim preview now shows the full path up to the first thing it would hit (reaches the farthest apple); flight + preview share arrowHit().
 - 2026-10-12 — Precise range: arrow + aim preview share one fixed-step sim (1/300s, incl. wind); landing matches preview exactly, frame-rate independent.
